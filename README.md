@@ -1,328 +1,447 @@
 # 🎓 AI Teaching Agent Team
 
-A multi-agent AI system that routes educational queries to four specialized agents — each one generating structured content and saving it as a Google Doc. Built with Python, Agno, OpenAI GPT-4o-mini, Composio, SerpAPI, and Streamlit.
+> A local, free, multi-agent AI teaching system powered by **Ollama** — four specialised agents that explain, plan, curate, and practice with you. Fully offline, no cloud API costs, with persistent chat history, Prolog-powered prerequisite gating, and downloadable Word document output.
 
 ---
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [What's New vs V1](#whats-new-vs-v1)
 - [System Architecture](#system-architecture)
 - [The Four Agents](#the-four-agents)
+- [Key Features](#key-features)
 - [Tech Stack](#tech-stack)
-- [Team Structure](#team-structure)
-- [Project File Structure](#project-file-structure)
+- [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Installation & Setup](#installation--setup)
-- [Environment Configuration](#environment-configuration)
+- [Environment Variables](#environment-variables)
 - [Running the App](#running-the-app)
 - [How It Works](#how-it-works)
-- [Agent Details](#agent-details)
-  - [Professor Agent](#professor-agent)
-  - [Academic Advisor Agent](#academic-advisor-agent)
-  - [Research Librarian Agent](#research-librarian-agent)
-  - [Teaching Assistant Agent](#teaching-assistant-agent)
+- [Feature Guide](#feature-guide)
 - [Output Schema](#output-schema)
-- [Integration Contract (for UI)](#integration-contract-for-ui)
-- [Tool Integration](#tool-integration)
+- [Integration Contract](#integration-contract)
+- [Prolog Knowledge Base](#prolog-knowledge-base)
+- [Chat History Architecture](#chat-history-architecture)
+- [Document Generation](#document-generation)
+- [Routing Logic](#routing-logic)
 - [Testing](#testing)
-- [Cost & Token Budget](#cost--token-budget)
-- [Known Limitations (v1)](#known-limitations-v1)
-- [Contributing](#contributing)
+- [Troubleshooting](#troubleshooting)
+- [Known Limitations](#known-limitations)
 
 ---
 
 ## Overview
 
-The AI Teaching Agent Team is a production-grade multi-agent system designed to assist learners by routing their educational queries to the most appropriate AI agent. Instead of one generic AI trying to do everything, four specialized agents each own a distinct teaching function:
+The AI Teaching Agent Team is a production-grade multi-agent system that routes educational queries to the most appropriate specialist. Instead of one generic AI, four dedicated agents each own a distinct teaching function:
 
-| Need | Agent | What It Produces |
-|------|-------|-----------------|
-| "Explain this topic to me" | Professor Agent | Structured lecture note |
-| "Help me plan how to learn this" | Academic Advisor Agent | Phased study roadmap |
-| "Find me papers and resources" | Research Librarian Agent | Annotated bibliography |
-| "Give me practice problems" | Teaching Assistant Agent | Problem set + full solutions |
+| Query Intent | Agent | Persona | Output |
+|---|---|---|---|
+| Explain / teach / what is / how does | **Professor** | Professor Nova 🎓 | Structured lecture notes |
+| Plan / roadmap / study schedule | **Advisor** | Advisor Sage 🗺️ | Phased study plan |
+| Find sources / resources / books | **Librarian** | Librarian Lumen 📚 | Annotated resource guide |
+| Practice / quiz / problems | **TA** | TA Atlas ✏️ | Practice set + solutions |
 
-Every agent response is saved as a **Google Doc via Composio**, and the document link is returned to the user alongside the text response.
+Every response is shown directly in the chat window and also saved as a **downloadable `.docx` Word document** generated in memory — no files written to disk, no cloud storage required.
+
+---
+
+## What's New vs V1
+
+| Feature | V1 | Final |
+|---|---|---|
+| LLM | OpenAI GPT-4o-mini (paid, cloud) | **qwen2.5:7b / mistral:7b via Ollama (free, local)** |
+| Document output | Google Docs via Composio | **In-memory .docx download button** |
+| Routing | Agno Team `route` mode (LLM call) | **Python keyword router (instant, zero tokens)** |
+| Chat history | Session state only (lost on refresh) | **SQLite (durable) + Redis (fast cache)** |
+| Student tracking | None | **Per-session memory + gap analysis** |
+| Prerequisite awareness | None | **Prolog knowledge base with advisory gate** |
+| Full-session mode | None | **All 4 agents respond in tabs** |
+| Internet required | Yes | **No (optional for SerpAPI search)** |
+| Cost per query | ~$0.0004 | **$0.00** |
 
 ---
 
 ## System Architecture
 
 ```
-User Query
-    │
-    ▼
-Agno Team (mode: "route")
-    │   GPT-4o-mini classifies intent
-    │
-    ├──── "explain / teach"  ──▶  Professor Agent ──▶ Google Doc
-    ├──── "plan / advise"    ──▶  Advisor Agent   ──▶ Google Doc
-    ├──── "find / research"  ──▶  Librarian Agent ──▶ Google Doc
-    └──── "practice / quiz"  ──▶  TA Agent        ──▶ Google Doc
-                                       │
-                                       ▼
-                               AgentResponse object
-                              (content + doc_url + metadata)
-                                       │
-                                       ▼
-                               Streamlit UI (Role 3)
+User Query (Streamlit UI)
+         │
+         ▼
+  Python Keyword Router          ← Zero LLM overhead, instant
+  (team/teaching_team.py)
+         │
+    ┌────┴─────────────────────────┐
+    │  Keyword match → agent ID   │
+    └────┬─────────────────────────┘
+         │
+    ┌────▼────┐  ┌────────┐  ┌───────────┐  ┌──────┐
+    │Professor│  │Advisor │  │ Librarian │  │  TA  │
+    │ Nova    │  │  Sage  │  │   Lumen   │  │Atlas │
+    │qwen2.5  │  │qwen2.5 │  │ mistral   │  │mistr │
+    │  :7b    │  │  :7b   │  │   :7b     │  │al:7b │
+    └────┬────┘  └───┬────┘  └─────┬─────┘  └──┬───┘
+         └───────────┴─────────────┴────────────┘
+                              │
+                    ┌─────────▼──────────┐
+                    │   team/interface   │
+                    │  • Extract content │
+                    │  • Prolog validate │
+                    │  • Generate .docx  │
+                    │  • Save to DB      │
+                    │  • Record memory   │
+                    └─────────┬──────────┘
+                              │
+                    ┌─────────▼──────────┐
+                    │    AgentResponse   │
+                    │  content (chat)    │
+                    │  doc_bytes (docx)  │
+                    └─────────┬──────────┘
+                              │
+                    ┌─────────▼──────────┐
+                    │   Streamlit UI     │
+                    │  • Show in chat    │
+                    │  • Download button │
+                    │  • Progress panel  │
+                    └────────────────────┘
+
+Persistence Layer:
+  SQLite ──────── chat_history.db     (durable, all messages + doc bytes)
+  SQLite ──────── student_memory.db   (topic history, gap analysis)
+  Redis  ──────── hot cache           (last 50 messages, fast read)
+                  (optional — falls back to SQLite if unavailable)
+
+Prolog Layer (optional):
+  SWI-Prolog ──── knowledge_base.pl   (prerequisites, difficulty, validation)
 ```
 
 ![System Architecture](/images/system_architecture_diagram.svg)
-
-**Design decisions:**
-
-- **Route mode, not collaborate mode.** Each query goes to exactly one agent. This keeps latency low, cost predictable, and debugging straightforward.
-- **One new Google Doc per response.** No updating of existing docs in v1. Atomic creation avoids data corruption.
-- **Session-level context continuity.** Agno Team maintains history across turns (capped at 3 exchanges) so follow-up queries like *"now give me practice problems for that"* work correctly.
-- **Never raises.** The `run_teaching_team()` interface always returns an `AgentResponse` — even on failure — so the UI never crashes from an unhandled exception.
 
 ---
 
 ## The Four Agents
 
-### Agent Routing Rules
-
+### 🎓 Professor Nova
+**Model:** `qwen2.5:7b` | **Trigger:** explain, what is, how does, teach me, describe, define, overview  
+**Output structure:**
 ```
-Query intent → Agent selected
-
-EXPLAIN / TEACH / DESCRIBE / WHAT IS / HOW DOES  →  Professor
-PLAN / ROADMAP / SCHEDULE / GUIDE / ADVISE        →  Advisor
-FIND / RESEARCH / SOURCES / PAPERS / REFERENCES   →  Librarian
-PRACTICE / QUIZ / TEST / EXERCISES / PROBLEMS     →  Teaching Assistant
-
-Tie-break: ambiguous → default to Professor
+## Overview          — 2-3 paragraphs from first principles
+## Core Concepts     — 4-5 bullets with bold concept names
+## Worked Example    — numbered step-by-step walkthrough
+## Common Misconceptions — 2-3 bullets: myth vs reality
+## Summary           — what it is, why it matters, what to learn next
 ```
+
+### 🗺️ Advisor Sage
+**Model:** `qwen2.5:7b` | **Trigger:** study plan, roadmap, schedule, path to, how do I become, curriculum  
+**Output structure:**
+```
+## Goal              — what the student will achieve
+## Prerequisites     — what to know first
+## Study Plan        — Phase 1 / 2 / 3 with weekly tasks
+## Milestones        — numbered measurable checkpoints
+## Resources         — curated tools and materials
+## Summary           — 2 sentences on the path
+```
+
+### 📚 Librarian Lumen
+**Model:** `mistral:7b` | **Trigger:** find resources, books, articles, papers, references, where can I learn  
+**Output structure:**
+```
+## Introduction      — overview of the learning landscape
+## Books             — 3-5 with author and annotation
+## Online Courses    — 3-5 with platform
+## Articles & Papers — 3-5 with source
+## Practice & Tools  — 2-3 interactive resources
+## Summary           — best starting point and order
+```
+
+### ✏️ TA Atlas
+**Model:** `mistral:7b` | **Trigger:** practice, quiz, exercise, problems, test me, homework  
+**Output structure:**
+```
+## Introduction      — topic and difficulty level
+## Problems          — 5 problems (Easy/Medium/Hard labelled)
+## Solutions         — Step 1 / Step 2 / Answer for each
+## Key Takeaways     — 3 bullets summarising lessons
+```
+
+---
+
+## Key Features
+
+### ⚡ Feature 1 — Student Memory & Progress Tracking
+Every topic you study is recorded in `data/student_memory.db`. The sidebar shows:
+- Total topics and unique topics studied
+- Breakdown by which agent answered
+- **Gap analysis** — using the Prolog prerequisite graph, surfaces the top 5 topics you're ready to learn next (all prerequisites covered)
+
+### 🧠 Feature 2 — Prolog Prerequisite Gating
+When you ask about an advanced topic (e.g., Deep Learning), a yellow advisory banner shows:
+- Which prerequisites you should know first
+- A collapsible visual prerequisite tree
+- **Proceed anyway** or **Cancel** buttons
+
+The gate is advisory only — it never hard-blocks learning. Requires SWI-Prolog (optional).
+
+### 🚀 Feature 3 — Full Session Mode
+Switch to **Full Session** in the sidebar. All four agents respond to your topic sequentially and results are displayed in four tabs:
+1. Professor explains the concept
+2. TA generates practice problems
+3. Librarian finds resources  
+4. Advisor builds a study plan
+
+Each tab has its own download button.
+
+### 📄 Downloadable Word Documents
+Every response automatically generates a professional `.docx` file:
+- Agent-branded colour scheme and header/footer
+- Proper heading hierarchy, bullet lists, numbered lists
+- Rendered entirely in memory — no files stored on disk
+- One-click download from the chat window
+
+### 💾 Persistent Chat History
+Chat history survives page refresh and browser restarts:
+- **Redis** (if running): fast hot cache, last 50 messages per session
+- **SQLite** (always): permanent durable storage including doc bytes
+- Redis is optional — falls back to SQLite silently if unavailable
 
 ---
 
 ## Tech Stack
 
 | Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Language | Python 3.11+ | Core development language |
-| Agent Framework | Agno ≥ 1.0.0 | Agent and Team orchestration |
-| LLM | OpenAI GPT-4o-mini | All agent reasoning and generation |
-| Google Docs | Composio ≥ 0.5.0 | Create and return documents |
-| Web Search | SerpAPI | Real-time web search for agents |
-| UI | Streamlit ≥ 1.35.0 | Chat interface (Role 3) |
-| Environment | python-dotenv | API key management |
+|---|---|---|
+| Language | Python 3.11+ | Core development |
+| Agent Framework | Agno ≥ 1.0.0 | Agent orchestration |
+| LLM (Professor/Advisor) | qwen2.5:7b via Ollama | Free, local inference |
+| LLM (Librarian/TA) | mistral:7b via Ollama | Free, local inference |
+| Routing | Python keyword matching | Zero-latency, zero-token routing |
+| UI | Streamlit ≥ 1.35.0 | Chat interface |
+| Document generation | docx (Node.js) + doc_generator.py | Professional .docx in memory |
+| Chat persistence | SQLite + Redis | Durable history + fast cache |
+| Student memory | SQLite | Per-session topic tracking |
+| Prerequisite logic | SWI-Prolog + pyswip | Knowledge graph + gate |
+| Environment | python-dotenv | Config management |
 
 ---
 
-## Team Structure
-
-This project is built by three developers working independently:
-
-| Role | Responsibility | Owns |
-|------|---------------|------|
-| **Role 1 — DevOps** | API keys, environment setup, Composio auth | `.env`, `composio add googledocs` |
-| **Role 2 — Agent Logic** | All agent definitions, prompts, schemas, reasoning | `agents/`, `team/`, `schemas/`, `tools/`, `utils/` |
-| **Role 3 — Full-stack** | Streamlit UI, session management, display | `ui/app.py` |
-
-**Role 3 imports only one function:**
-```python
-from team.interface import run_teaching_team
-```
-
----
-
-## Project File Structure
+## Project Structure
 
 ```
-ai_teaching_agent_team/
+AI_Teaching_Agent_Team/
 │
-├── agents/                          # Role 2 — agent definitions
-│   ├── __init__.py
-│   ├── professor_agent.py           # Agent-01: lecture notes
-│   ├── advisor_agent.py             # Agent-02: study plans
-│   ├── librarian_agent.py           # Agent-03: research guides
-│   └── teaching_assistant_agent.py  # Agent-04: practice sets
+├── main.py                          # Entry point — Streamlit + Ollama health check
+├── generate_docx.js                 # Node.js docx generator (called via subprocess)
+├── package.json                     # Node.js dependency (docx ^9.x)
+├── requirements.txt                 # Python dependencies
+├── .env                             # API keys and config — never commit
+├── .gitignore
 │
-├── team/                            # Role 2 — orchestration
-│   ├── __init__.py
-│   ├── teaching_team.py             # Agno Team assembly + routing logic
-│   └── interface.py                 # ⭐ ONLY file Role 3 imports
+├── agents/                          # Agent definitions
+│   ├── professor_agent.py           # Professor Nova — qwen2.5:7b
+│   ├── advisor_agent.py             # Advisor Sage  — qwen2.5:7b
+│   ├── librarian_agent.py           # Librarian Lumen — mistral:7b
+│   └── teaching_assistant_agent.py  # TA Atlas — mistral:7b
 │
-├── schemas/                         # Role 2 — shared data contracts
-│   ├── __init__.py
+├── team/
+│   ├── teaching_team.py             # Python keyword router
+│   ├── interface.py                 # ⭐ Main pipeline — route → run → docx → save
+│   └── full_session.py              # Full Session mode — all 4 agents
+│
+├── ui/
+│   └── app.py                       # Streamlit UI — all 3 features integrated
+│
+├── schemas/
 │   └── agent_response.py            # AgentResponse dataclass
 │
-├── tools/                           # Role 2 — tool factories
-│   ├── __init__.py
-│   ├── composio_tools.py            # Google Docs tool factory
-│   └── search_tools.py              # SerpAPI tool factory
+├── tools/
+│   ├── doc_generator.py             # Python wrapper for generate_docx.js
+│   └── search_tools.py              # SerpAPI web search (optional)
 │
-├── utils/                           # Role 2 — helpers
-│   ├── __init__.py
-│   └── response_parser.py           # Raw Agno output → AgentResponse
+├── utils/
+│   ├── chat_history.py              # SQLite + Redis persistence
+│   ├── memory.py                    # Student progress + gap analysis
+│   ├── prereq_gate.py               # Prolog prerequisite gate
+│   ├── prolog_engine.py             # SWI-Prolog bridge (pyswip)
+│   └── response_parser.py           # Extracts clean content from RunOutput
 │
-├── tests/                           # Role 2 — test suite
-│   ├── __init__.py
-│   └── test_agents.py               # Routing + schema + integration tests
+├── prolog/
+│   └── knowledge_base.pl            # Prerequisites, difficulty, validation rules
 │
-├── ui/                              # Role 3 — frontend
-│   └── app.py                       # Streamlit chat application
+├── tests/
+│   └── test_agents.py               # Test suite
 │
-├── test_smoke.py                    # Quick end-to-end sanity check
-├── requirements.txt
-├── .env                             # API keys — never commit this
-├── .gitignore
-└── README.md
+├── images/
+│   └── system_architecture_diagram.svg
+│
+└── data/                            # Auto-created at runtime
+    ├── chat_history.db              # SQLite: all messages + doc bytes
+    └── student_memory.db            # SQLite: topic history per session
 ```
 
 ---
 
 ## Prerequisites
 
-Before starting, ensure you have:
-
-- Python 3.11 or higher
-- `pip` package manager
-- API keys for: OpenAI, Composio, SerpAPI
-- Composio Google Docs integration authenticated (done by Role 1)
-
-To verify your Python version:
-```bash
-python --version
-# Should output: Python 3.11.x or higher
-```
+| Requirement | Version | Purpose | Required? |
+|---|---|---|---|
+| Python | 3.11+ | Core runtime | ✅ Yes |
+| Ollama | Latest | Local LLM server | ✅ Yes |
+| Node.js | 18+ | docx file generation | ✅ Yes |
+| Redis | 7+ | Fast chat history cache | ⚠️ Optional |
+| SWI-Prolog | Latest | Prerequisite gate | ⚠️ Optional |
 
 ---
 
 ## Installation & Setup
 
-### Step 1 — Clone the repository
+### Step 1 — Install Ollama
 
+**macOS / Linux:**
 ```bash
-git clone https://github.com/your-org/ai_teaching_agent_team.git
-cd ai_teaching_agent_team
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-### Step 2 — Create and activate a virtual environment
+**Windows:** Download from https://ollama.com/download and run the installer.
+
+### Step 2 — Pull the required models
+
+```bash
+# Keep Ollama server running in one terminal:
+ollama serve
+
+# Pull models in another terminal (one-time, ~8GB total):
+ollama pull qwen2.5:7b
+ollama pull mistral:7b
+```
+
+### Step 3 — Install Node.js and docx package
+
+Download Node.js 18+ from https://nodejs.org (LTS version).
+
+Then install the docx package locally in the project folder:
+```bash
+cd AI_Teaching_Agent_Team
+npm install docx
+```
+
+> **Important:** Use `npm install` (local), not `npm install -g` (global). The script requires a local `node_modules/docx` folder.
+
+### Step 4 — Create and activate a Python virtual environment
 
 ```bash
 python -m venv venv
 
-# Mac / Linux
+# macOS / Linux:
 source venv/bin/activate
 
-# Windows
+# Windows:
 venv\Scripts\activate
 ```
 
-You should see `(venv)` in your terminal prompt.
-
-### Step 3 — Install dependencies
+### Step 5 — Install Python dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-**Full `requirements.txt` contents:**
-```
-agno>=1.0.0
-openai>=1.30.0
-composio-agno>=0.5.0
-google-auth>=2.28.0
-google-auth-oauthlib>=1.2.0
-google-api-python-client>=2.120.0
-serpapi>=0.1.5
-google-search-results>=2.4.2
-streamlit>=1.35.0
-python-dotenv>=1.0.0
-pydantic>=2.0.0
-requests>=2.31.0
-pytest>=8.0.0
+### Step 6 — Install Redis (optional but recommended)
+
+**Windows (WSL2):**
+```bash
+wsl sudo apt install redis-server
+wsl redis-server --daemonize yes
 ```
 
-### Step 4 — Configure environment variables
+**macOS:**
+```bash
+brew install redis
+brew services start redis
+```
+
+**Ubuntu / Debian:**
+```bash
+sudo apt install redis-server
+sudo systemctl start redis
+```
+
+If Redis is not running, the app falls back to SQLite-only history automatically — no crash, no configuration needed.
+
+### Step 7 — Install SWI-Prolog (optional)
+
+Required only for the prerequisite gate feature.
+
+**macOS:** `brew install swi-prolog`  
+**Ubuntu:** `sudo apt-get install swi-prolog`  
+**Windows:** Download from https://www.swi-prolog.org/download/stable
+
+### Step 8 — Configure environment variables
+
+Copy and edit the `.env` file:
 
 ```bash
-cp .env.example .env
+cp .env .env.backup   # optional backup
 ```
 
-Open `.env` and fill in your values (see [Environment Configuration](#environment-configuration) below).
-
-### Step 5 — Verify Composio Google Docs auth
-
-This step must be completed by **Role 1 (DevOps)**. Confirm they have run:
-
-```bash
-composio add googledocs
-```
-
-And completed the OAuth browser flow for the target Google account. Without this, agents will generate content but fail to create documents.
+Then open `.env` and fill in your values (see [Environment Variables](#environment-variables)).
 
 ---
 
-## Environment Configuration
-
-Create a `.env` file in the project root with these values:
+## Environment Variables
 
 ```env
-# Required
-OPENAI_API_KEY=sk-proj-your-openai-key-here
-COMPOSIO_API_KEY=your-composio-api-key-here
-SERPAPI_API_KEY=your-serpapi-api-key-here
+# ── Ollama (required) ──────────────────────────────────────────
+OLLAMA_HOST=http://localhost:11434
 
-# Optional / defaults shown
-OPENAI_MODEL=gpt-4o-mini
+# ── SerpAPI (optional — enables web search inside agents) ──────
+SERPAPI_API_KEY=your-serpapi-key-here
+
+# ── Persistence ────────────────────────────────────────────────
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_TTL=86400
+
+CHAT_DB_PATH=data/chat_history.db
+STUDENT_DB_PATH=data/student_memory.db
+
+# ── Debug ──────────────────────────────────────────────────────
 DEBUG=false
 ```
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENAI_API_KEY` | ✅ Yes | OpenAI API key for GPT-4o-mini |
-| `COMPOSIO_API_KEY` | ✅ Yes | Composio key for Google Docs integration |
-| `SERPAPI_API_KEY` | ✅ Yes | SerpAPI key for web search |
-| `OPENAI_MODEL` | No | Defaults to `gpt-4o-mini` |
-| `DEBUG` | No | Set to `true` to show tool call details in terminal |
-
-> **Security:** The `.env` file is listed in `.gitignore` and must never be committed to version control.
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `OLLAMA_HOST` | No | `http://localhost:11434` | Ollama server URL |
+| `SERPAPI_API_KEY` | No | — | Enables live web search in agents |
+| `REDIS_HOST` | No | `localhost` | Redis host |
+| `REDIS_PORT` | No | `6379` | Redis port |
+| `REDIS_TTL` | No | `86400` | Session cache TTL in seconds (24h) |
+| `CHAT_DB_PATH` | No | `data/chat_history.db` | SQLite chat history path |
+| `STUDENT_DB_PATH` | No | `data/student_memory.db` | SQLite memory DB path |
+| `DEBUG` | No | `false` | Set `true` for verbose agent logs |
 
 ---
 
 ## Running the App
 
-### Quick smoke test (verify pipeline end-to-end)
-
 ```bash
-python test_smoke.py
+# Ensure Ollama is running first:
+ollama serve
+
+# Then launch:
+streamlit run main.py
 ```
 
-Expected output:
-```
-Running smoke test...
+Opens at **http://localhost:8501**
 
---- RESULTS ---
-Agent:     professor
-Success:   True
-Doc URL:   https://docs.google.com/document/d/...
-Doc Title: Lecture: Gradient Descent
-Word Count: 847
-Error:
-
-Content preview (first 300 chars):
-TITLE: Lecture: Gradient Descent
-SECTION: Overview
-Gradient descent is an optimization algorithm used to minimize a function...
-```
+On startup, the app checks if Ollama is reachable and shows a warning banner if not — it will not crash.
 
 ### Run tests
 
 ```bash
 python -m pytest tests/test_agents.py -v
 ```
-
-### Launch the Streamlit UI
-
-```bash
-streamlit run ui/app.py
-```
-
-Then open `http://localhost:8501` in your browser.
 
 ---
 
@@ -331,369 +450,279 @@ Then open `http://localhost:8501` in your browser.
 ### Request lifecycle
 
 ```
-1. User types a query in the Streamlit chat input
-2. UI calls run_teaching_team(topic, session_id, user_level)
-3. interface.py validates input, calls teaching_team.run()
-4. Agno Team (GPT-4o-mini, temp=0.1) reads routing rules
-5. Team selects one agent and passes the query verbatim
-6. Selected agent:
-   a. Calls SerpAPI to search for relevant information (0-5 searches)
-   b. Generates structured content following its format rules
-   c. Calls GOOGLEDOCS_CREATE_DOCUMENT via Composio
-   d. Composio creates the doc and returns a URL
-   e. Agent includes DOC_URL: [url] in its response
-7. response_parser.py extracts: agent ID, doc URL, doc title, content
-8. AgentResponse object is returned to UI
-9. UI displays: chat message + clickable Google Doc link
-```
-
-### Routing logic
-
-The team coordinator uses keyword-based intent classification at `temperature=0.1` (near-deterministic). The routing instructions define priority ordering so ambiguous queries have consistent fallbacks.
-
-### Session continuity
-
-Each user session has a `session_id`. Agno Team stores up to 3 prior exchanges per session. This allows follow-up queries to work:
-
-```
-User: "Explain neural networks"
-→ Professor Agent responds
-
-User: "Now give me practice problems for that"
-→ TA Agent sees prior context, generates neural network problems
+1. User types a query in the chat input
+2. Prerequisite gate checks topic against Prolog graph (if SWI-Prolog installed)
+   → If advanced topic with unmet prereqs: show advisory warning
+   → User can proceed anyway or cancel
+3. Python keyword router maps query to agent ID (instant, no LLM call)
+4. interface.py builds prompt: [User Level: X] + [Topic: Y] + instructions
+5. Agent calls agent_obj.run(prompt) → Ollama generates response
+6. response_parser extracts clean text from RunOutput.content
+7. Prolog validation runs (advisor plan structure check / TA solution check)
+8. generate_docx_bytes() calls Node.js → generates .docx bytes in memory
+9. save_message() persists to SQLite and pushes to Redis cache
+10. record_topic() updates student memory DB
+11. AgentResponse returned to UI
+12. UI renders: markdown in chat + agent badge + download button
 ```
 
 ---
 
-## Agent Details
+## Feature Guide
 
-### Professor Agent
+### Single Agent Mode (default)
 
-**ID:** `professor`  
-**Persona:** Professor Nova  
-**Trigger:** explain, teach, describe, what is, how does, overview
+Type any question in the chat input. The Python router picks the best agent automatically. A download button appears below every response.
 
-**Output document structure:**
-```
-TITLE: Lecture: [Topic Name]
-SECTION: Overview          — 2-3 paragraphs, first-principles
-SECTION: Core Concepts     — 5-8 bullet points, 2-3 sentences each
-SECTION: Worked Example    — concrete step-by-step illustration
-SECTION: Misconceptions    — 3 common mistakes with corrections
-SECTION: Summary           — 3 sentences: what, why it matters, next step
-```
+**Example queries:**
+- `"Explain gradient descent to me"` → Professor Nova
+- `"Create a study plan for machine learning"` → Advisor Sage
+- `"Find resources for learning calculus"` → Librarian Lumen
+- `"Give me practice problems on data structures"` → TA Atlas
 
-**Tools used:** SerpAPI (1-2 searches for fact verification), Composio Google Docs  
-**Target length:** 600–900 words  
-**Model settings:** GPT-4o-mini, temperature 0.3, max_tokens 2048
+### Full Session Mode
 
----
+Click **🚀 Full Session** in the sidebar radio buttons. All four agents respond to your topic and results appear in four labelled tabs. Each tab has its own download button. Takes approximately 2–5 minutes depending on hardware.
 
-### Academic Advisor Agent
+### Progress Panel
 
-**ID:** `advisor`  
-**Persona:** Advisor Sage  
-**Trigger:** plan, roadmap, schedule, guide me, how to learn, advise
+The sidebar bottom shows your learning progress for the current session. After several queries, the **"What to Study Next"** section appears showing topics whose prerequisites you've now covered, based on the Prolog graph.
 
-**Output document structure:**
-```
-TITLE: Study Plan: [Topic Name]
-SECTION: Goal Statement         — what the learner will achieve
-SECTION: Prerequisites          — 3-5 prior knowledge areas
-SECTION: Phase 1 - [Name]       — duration, objectives, resources, milestone
-SECTION: Phase 2 - [Name]       — duration, objectives, resources, milestone
-SECTION: Phase 3 - [Name]       — duration, objectives, resources, milestone
-SECTION: Weekly Schedule        — sample 5-day week breakdown
-SECTION: Success Metrics        — measurable mastery criteria
-```
+### Prerequisite Gate
 
-**Tools used:** SerpAPI (1-3 searches for resource discovery), Composio Google Docs  
-**Target length:** 500–800 words  
-**Model settings:** GPT-4o-mini, temperature 0.3, max_tokens 2048
+When you ask about an advanced topic like Deep Learning or Dynamic Programming, a yellow warning appears listing what you should know first. Click **"Proceed anyway"** to continue or **"Cancel"** to rethink. The gate is never a hard block.
 
-> Note: Always states assumptions (e.g., "assumes 1 hour/day"). Never promises mastery in under 2 weeks for complex topics.
+### Chat History Recovery
 
----
-
-### Research Librarian Agent
-
-**ID:** `librarian`  
-**Persona:** Librarian Lumen  
-**Trigger:** find, research, sources, papers, references, resources, bibliography
-
-**Output document structure:**
-```
-TITLE: Research Guide: [Topic Name]
-SECTION: Topic Brief              — 2 paragraphs on research scope
-SECTION: Foundational Resources   — 3-4 books/papers + annotations
-SECTION: Online Courses           — 3-4 links with descriptions
-SECTION: Key Websites             — 3-4 trusted online resources
-SECTION: Recent Developments      — 2-3 articles from 2022+
-SECTION: Research Tips            — 3-4 search strategies
-```
-
-**Tools used:** SerpAPI (3-5 searches for resource discovery), Composio Google Docs  
-**Target:** 8–14 total resources across all sections  
-**Model settings:** GPT-4o-mini, temperature 0.3, max_tokens 2048
-
-> Note: Never fabricates URLs. Paywalled resources are marked `[PAYWALLED]`. If a search returns no result for a resource, it is omitted rather than invented.
-
----
-
-### Teaching Assistant Agent
-
-**ID:** `ta`  
-**Persona:** TA Atlas  
-**Trigger:** practice, quiz, test me, problems, exercises, give me questions
-
-**Output document structure:**
-```
-TITLE: Practice Set: [Topic Name]
-SECTION: Topic Scope         — what skills the problems test
-SECTION: Warm-Up Problems    — exactly 3 problems (foundational)
-SECTION: Core Problems       — exactly 4 problems (intermediate)
-SECTION: Challenge Problems  — exactly 2 problems (advanced)
-SECTION: Solutions           — full worked solution for every problem
-SECTION: Self-Assessment     — specific rubric to grade your own answers
-```
-
-**Tools used:** SerpAPI (0-1 searches for domain-specific facts), Composio Google Docs  
-**Target:** exactly 9 problems (3+4+2), all with fully worked solutions  
-**Model settings:** GPT-4o-mini, temperature 0.3, max_tokens 2048
+If you refresh the page or close and reopen the browser, your previous chat is restored from the database. The same `session_id` (stored in browser session state) is used to load your history from SQLite.
 
 ---
 
 ## Output Schema
 
-Every agent returns an `AgentResponse` object defined in `schemas/agent_response.py`:
-
 ```python
 @dataclass
 class AgentResponse:
-    # Always populated
-    agent: str       # 'professor' | 'advisor' | 'librarian' | 'ta' | 'unknown'
-    topic: str       # Original user query
-    content: str     # Full agent text (for chat display)
-    doc_url: str     # Google Docs URL (empty string if creation failed)
-    doc_title: str   # Document title
-    success: bool    # False if any error occurred
-    error: str       # Error message (empty string if success=True)
-
-    # Metadata
-    doc_id: str                # Google Doc ID
-    search_queries: list       # SerpAPI queries used
-    word_count: int            # Word count of content
-    timestamp: str             # UTC ISO 8601 timestamp
+    agent: str            # 'professor' | 'advisor' | 'librarian' | 'ta' | 'unknown'
+    topic: str            # Original user query
+    content: str          # Structured markdown — displayed in chat
+    doc_url: str          # Empty string (legacy field, kept for compatibility)
+    doc_title: str        # e.g. "Lecture: Gradient Descent"
+    doc_bytes: bytes | None  # Raw .docx bytes for download button
+    word_count: int       # Word count of content
+    timestamp: str        # UTC ISO 8601
+    success: bool         # False if any error occurred
+    error: str            # Error message (empty if success=True)
 ```
 
-**Serialization:**
+**Usage in UI:**
 ```python
-response.to_dict()   # → Python dict
-response.to_json()   # → JSON string
-```
+from team.interface import run_teaching_team
 
-**Error responses follow the same schema:**
-```python
-# On any failure, success=False and doc_url="" but content is still populated
-AgentResponse.error_response(agent="unknown", topic=topic, error_msg="...")
+response = run_teaching_team(
+    topic="Explain neural networks",
+    session_id="user-session-uuid",
+    user_level="intermediate",
+)
+
+if response.success:
+    print(response.content)          # show in chat
+    if response.doc_bytes:
+        # serve as download button
+        st.download_button("Download", response.doc_bytes, "lecture.docx")
+else:
+    print(response.error)
 ```
 
 ---
 
-## Integration Contract (for UI)
+## Integration Contract
 
-Role 3 imports and uses exactly this:
+The UI imports exactly one function:
 
 ```python
 from team.interface import run_teaching_team
-from schemas.agent_response import AgentResponse
 ```
 
-### Function signature
-
+**Signature:**
 ```python
 def run_teaching_team(
-    topic: str,            # User's question — 1 to 500 characters
-    session_id: str,       # Unique session ID, e.g. UUID per user
+    topic: str,            # 1–500 characters
+    session_id: str,       # UUID per user session
     user_level: str,       # 'beginner' | 'intermediate' | 'advanced'
-) -> AgentResponse:
-    ...
+) -> AgentResponse:        # always returns, never raises
 ```
 
-### Usage example
-
-```python
-response = run_teaching_team(
-    topic="Explain gradient descent",
-    session_id="user-abc-123",
-    user_level="intermediate"
-)
-
-# Display in chat
-print(response.content)
-
-# Render as clickable link
-if response.success and response.doc_url:
-    print(f"Open document: {response.doc_url}")
-else:
-    print(f"Document unavailable: {response.error}")
-
-# Show which agent responded
-print(f"Answered by: {response.agent}")
-```
-
-### UI responsibilities
-
-- Validate that `response.success` is `True` before rendering `response.doc_url` as a link
-- Handle `success=False` by showing `response.error` in a non-breaking error state
-- Store `session_id` per user session (not per message) for context continuity
-- Never call `teaching_team.run()` directly — only use `run_teaching_team()`
+**UI responsibilities:**
+- Generate and store `session_id` once per browser session
+- Check `response.success` before rendering content
+- Pass `response.doc_bytes` directly to `st.download_button()`
+- Never call agents directly — always go through `run_teaching_team()`
 
 ---
 
-## Tool Integration
+## Prolog Knowledge Base
 
-### Composio — Google Docs
+Located at `prolog/knowledge_base.pl`. Defines three types of facts:
 
-- **Action used:** `GOOGLEDOCS_CREATE_DOCUMENT`
-- **When:** Every successful agent run creates one new document
-- **v1 policy:** Create only, never update (updates are v2 scope)
-- **Auth requirement:** Role 1 must run `composio add googledocs` and complete OAuth before first use
-
-Tool factory (`tools/composio_tools.py`):
-```python
-from composio_agno import ComposioToolSet, Action
-
-def get_composio_tools() -> list:
-    toolset = ComposioToolSet(api_key=os.getenv("COMPOSIO_API_KEY"))
-    return toolset.get_tools(actions=[Action.GOOGLEDOCS_CREATE_DOCUMENT])
+### prerequisite/2
+```prolog
+prerequisite(algebra, calculus).
+prerequisite(calculus, machine_learning).
+prerequisite(programming_basics, data_structures).
+% ... 20+ relationships across maths and CS
 ```
 
-### SerpAPI — Web Search
-
-- **Tool:** `SerpApiTools` from `agno.tools.serpapi`
-- **Results per query:** 5 maximum (cost control)
-- **Usage cap per request:** 0–5 searches depending on agent
-- **Free tier:** 100 searches/month
-
-Tool factory (`tools/search_tools.py`):
-```python
-from agno.tools.serpapi import SerpApiTools
-
-def get_search_tools() -> SerpApiTools:
-    return SerpApiTools(api_key=os.getenv("SERPAPI_API_KEY"), num_results=5)
+### topic_difficulty/2
+```prolog
+topic_difficulty(algebra, beginner).
+topic_difficulty(calculus, intermediate).
+topic_difficulty(machine_learning, advanced).
+topic_difficulty(deep_learning, advanced).
 ```
 
-### Error Handling
+### prerequisite_chain/2 (transitive)
+```prolog
+prerequisite_chain(X, Y) :- prerequisite(X, Y).
+prerequisite_chain(X, Y) :- prerequisite(X, Z), prerequisite_chain(Z, Y).
+```
 
-| Failure | Cause | Response |
-|---------|-------|----------|
-| Composio auth error | Invalid/expired key | `success=False`, content still returned |
-| Google Doc creation fail | OAuth scope missing | Retry once, then content-only response |
-| SerpAPI quota exceeded | 100/month limit | Agent proceeds using training knowledge |
-| GPT-4o-mini timeout | Rate limit / network | Retry 3× with exponential backoff (2s, 4s, 8s) |
-| Hallucinated URL | Model fabrication | Parser validates format; sets `doc_url=""` if invalid |
-| Empty agent response | Model refusal | `error_response()` with descriptive message |
-| Empty topic input | User error | Caught at `run_teaching_team()` before hitting model |
+**To add a new topic:**
+```prolog
+prerequisite(your_topic, advanced_topic).
+topic_difficulty(your_topic, intermediate).
+```
+
+---
+
+## Chat History Architecture
+
+```
+Write path:  interface.py
+               └─ save_message()
+                    ├─ INSERT INTO chat_messages (SQLite) ← always
+                    └─ RPUSH chat:{session_id} (Redis)    ← if available
+
+Read path:   ui/app.py _load_history_once()
+               └─ load_history(session_id)
+                    ├─ LRANGE chat:{session_id} (Redis)   ← try first (fast)
+                    └─ SELECT FROM chat_messages (SQLite) ← fallback
+
+Doc bytes:   stored as BLOB in SQLite only (Redis holds lightweight JSON)
+             fetched on-demand by get_doc_bytes() when download clicked
+```
+
+**SQLite schema:**
+```sql
+CREATE TABLE chat_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT    NOT NULL,
+    role       TEXT    NOT NULL,       -- 'user' | 'assistant'
+    content    TEXT    NOT NULL,
+    agent      TEXT    NOT NULL DEFAULT '',
+    doc_title  TEXT    NOT NULL DEFAULT '',
+    doc_bytes  BLOB,                   -- .docx bytes, nullable
+    user_level TEXT    NOT NULL DEFAULT 'intermediate',
+    timestamp  TEXT    NOT NULL
+);
+```
+
+---
+
+## Document Generation
+
+Documents are generated by `generate_docx.js` (Node.js, called via subprocess) and returned as raw bytes. They are never written to disk — bytes are stored in SQLite for later re-download.
+
+**Features of generated documents:**
+- Agent-branded colour scheme (blue for Professor, green for Advisor, purple for Librarian, amber for TA)
+- Professional header with agent name and date
+- Page-numbered footer
+- Proper heading hierarchy (H1 banner, H2 section, H3 subsection)
+- Bullet lists with correct indentation
+- Numbered lists
+- Inline bold/italic/code formatting
+- Footer attribution line
+
+**To regenerate manually:**
+```bash
+echo '{"title":"Test","agent":"professor","content":"## Overview\nHello world","date":"May 1, 2026"}' | node generate_docx.js > test.docx
+```
+
+---
+
+## Routing Logic
+
+The router (`team/teaching_team.py`) uses keyword matching with priority ordering:
+
+```python
+_RULES = [
+    (ta_agent,        "ta",        ["practice", "quiz", "exercise", "problem", ...]),
+    (advisor_agent,   "advisor",   ["study plan", "roadmap", "schedule", ...]),
+    (librarian_agent, "librarian", ["find sources", "resources", "books", ...]),
+    (professor_agent, "professor", ["explain", "what is", "how does", ...]),
+]
+# Default fallback: professor
+```
+
+TA is checked first to catch queries like "explain and give me practice problems" correctly. Professor is the catch-all default for open-ended questions.
+
+**Adding routing keywords:**
+Edit `_RULES` in `team/teaching_team.py`. No other file needs to change.
 
 ---
 
 ## Testing
 
-### Run all tests
-
 ```bash
 python -m pytest tests/test_agents.py -v
 ```
 
-### Test coverage
-
-| Test | What it checks |
-|------|---------------|
-| `test_response_schema` | `AgentResponse` fields are correct types and populated |
-| `test_professor_routing` | Explanation queries → Professor Agent |
-| `test_advisor_routing` | Planning queries → Advisor Agent |
-| `test_librarian_routing` | Research queries → Librarian Agent |
-| `test_ta_routing` | Practice queries → Teaching Assistant Agent |
-| `test_empty_topic` | Empty string input is caught before model call |
-| `test_doc_url_present` | Google Doc URL is returned and valid |
-
-### Acceptance criteria
-
-- Routing accuracy ≥ 85% across test cases
-- Google Doc creation success rate ≥ 95%
-- Schema compliance: 100% (AgentResponse always returned)
-- No unhandled exceptions from `run_teaching_team()`
-
-### Prompt tuning protocol
-
-If routing accuracy drops below 85%:
-
-1. Identify which queries are misrouted (look for `MISS:` in test output)
-2. Change **one thing** in `team/teaching_team.py` routing instructions
-3. Re-run tests and compare before/after accuracy
-4. Log every change — never change multiple prompts in one iteration
+| Test | Checks |
+|---|---|
+| `test_response_schema` | AgentResponse fields are correct types |
+| `test_professor_routing` | Explanation queries → professor |
+| `test_advisor_routing` | Planning queries → advisor |
+| `test_librarian_routing` | Research queries → librarian |
+| `test_ta_routing` | Practice queries → ta |
+| `test_empty_topic` | Empty input caught before model call |
+| `test_route_query_keywords` | All routing rules return expected agent IDs |
 
 ---
 
-## Cost & Token Budget
+## Troubleshooting
 
-All agents use **GPT-4o-mini** at `temperature=0.3`.
-
-| Component | Est. Tokens |
-|-----------|-------------|
-| System prompt (4 instruction blocks) | ~400 |
-| User query + level prefix | ~50 |
-| SerpAPI results injected | ~500 |
-| Session history (3 turns max) | ~600 |
-| **Total input per request** | **~1,550** |
-| Agent output (600–900 word doc) | ~1,200 |
-| **Total per request** | **~2,750** |
-
-**Estimated cost:** ~$0.0004 per request  
-**At 1,000 requests/month:** ~$0.40
-
-GPT-4o-mini pricing (as of 2024): $0.15 per 1M input tokens, $0.60 per 1M output tokens.
+| Problem | Cause | Fix |
+|---|---|---|
+| Yellow "Ollama not detected" banner | Ollama not running | Run `ollama serve` |
+| "Empty response from agent" error | Model not pulled | Run `ollama pull qwen2.5:7b` and `ollama pull mistral:7b` |
+| No download button appears | Node.js `docx` not installed | Run `npm install docx` inside the project folder (not `-g`) |
+| `Cannot find module 'docx'` | Global install used instead of local | `cd AI_Teaching_Agent_Team && npm install docx` |
+| Redis unavailable warning in logs | Redis not running | Start Redis, or ignore — SQLite fallback is automatic |
+| Prolog features disabled | SWI-Prolog not installed | Install SWI-Prolog (optional feature) |
+| Very slow responses (>3 min) | Model running on CPU | Check `ollama ps` — ensure GPU is being used if available |
+| Response truncated mid-sentence | `num_predict` too low | Increase `num_predict` in agent files (default: 900) |
+| `sqlite3.OperationalError` | Missing `data/` folder | Run `mkdir data` in project root |
 
 ---
 
-## Known Limitations (v1)
+## Known Limitations
 
-| Limitation | Scope | Planned for |
-|-----------|-------|-------------|
-| One agent per query | No multi-agent collaboration | v2 |
-| Create-only for Google Docs | No updating existing docs | v2 |
-| English only | No multilingual support | v2 |
-| Single-topic queries | No compound multi-topic queries | v2 |
-| SerpAPI free tier (100/month) | Limited web searches | v2 (paid tier) |
-| No user authentication | Single shared Composio account | v2 |
-| Plain text documents | No rich formatting, tables, or images in docs | v2 |
-
----
-
-## Contributing
-
-This project uses a three-role development model. Before making changes:
-
-- **Agents (`agents/`):** Changes require updating the corresponding test cases in `tests/test_agents.py`
-- **Schema (`schemas/agent_response.py`):** Any field additions or renames must be communicated to Role 3 before merging
-- **Interface (`team/interface.py`):** The function signature of `run_teaching_team()` is frozen for v1. Do not add required parameters without coordinating with Role 3
-- **Tools (`tools/`):** Role 1 must be informed of any new tool dependencies that require API key setup
-
-### Branch naming convention
-
-```
-role2/feature-name    # Role 2 work
-role3/feature-name    # Role 3 work
-fix/description       # Bug fixes
-```
+| Limitation | Notes |
+|---|---|
+| English only | No multilingual support |
+| CPU inference is slow | ~30–90s per query on CPU. GPU reduces this to ~5–15s |
+| No streaming output | Full response appears at once, not word-by-word |
+| Session ID is browser-local | Different browsers = different chat history |
+| SerpAPI web search is optional | Agents use training knowledge when not configured |
+| Full Session mode is slow | Runs 4 sequential LLM calls — expect 2–5 minutes |
 
 ---
 
 ## License
 
-MIT License. See `LICENSE` for details.
+MIT License.
 
 ---
 
-*Built by a three-person team using Agno framework, OpenAI GPT-4o-mini, Composio, and SerpAPI.*
+*Built with Python, Agno, Ollama, Streamlit, Node.js docx, SQLite, Redis, and SWI-Prolog.*  
+*100% local. 100% free.*
