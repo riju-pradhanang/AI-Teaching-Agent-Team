@@ -252,7 +252,7 @@ function buildDoc(title, agentKey, content, date) {
         default: new Footer({
           children: [new Paragraph({
             children: [
-              new TextRun({ text: "AI Teaching Agent Team  ·  Powered by qwen3:8b via Ollama  ·  Page ", size: 16, font: "Arial", color: "AAAAAA" }),
+              new TextRun({ text: "AI Teaching Agent Team  ·  Powered by qwen2.5:7b via Ollama  ·  Page ", size: 16, font: "Arial", color: "AAAAAA" }),
               new TextRun({ children: [PageNumber.CURRENT], size: 16, font: "Arial", color: "AAAAAA" }),
             ],
             alignment: AlignmentType.CENTER,
@@ -286,7 +286,7 @@ function buildDoc(title, agentKey, content, date) {
         // ── Footer note ───────────────────────────────────────────────
         new Paragraph({ children: [], spacing: { before: 240, after: 0 } }),
         new Paragraph({
-          children: [new TextRun({ text: "AI Teaching Agent Team  ·  qwen3:8b via Ollama  ·  Free & Local", size: 16, font: "Arial", color: "AAAAAA", italics: true })],
+          children: [new TextRun({ text: "AI Teaching Agent Team  ·  qwen2.5:7b via Ollama  ·  Free & Local", size: 16, font: "Arial", color: "AAAAAA", italics: true })],
           alignment: AlignmentType.CENTER,
           border: { top: { style: BorderStyle.SINGLE, size: 4, color: colors.accent, space: 8 } },
         }),
